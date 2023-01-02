@@ -12,19 +12,21 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: true}));
 
 const SESSION_KEY = 'Authorization';
+const domain = 'software-security.us.auth0.com';
+const client_id = 'hOYc3fRqBS51QGejxeLSlw7vbGU2NQnA';
 
 const AuthenticationClient = new auth0.AuthenticationClient(
     {
-        domain: 'kpi.eu.auth0.com',
-        clientId: 'JIvCO5c2IBHlAe2patn6l6q5H35qxti0',
+        domain: domain,
+        clientId: client_id,
         clientSecret: process.env.CLIENT_SECRET
     }
 );
 
 const ManagementClient = new auth0.ManagementClient(
     {
-        domain: 'kpi.eu.auth0.com',
-        clientId: 'JIvCO5c2IBHlAe2patn6l6q5H35qxti0',
+        domain: domain,
+        clientId: client_id,
         clientSecret: process.env.CLIENT_SECRET
     }
 )
@@ -35,34 +37,34 @@ app.use(async (req, res, next) => {
     let refresh = req.get('Refresh');
 
     if (authorization) {
-        let tokens = authorization.split(';');
-        if (tokens.length === 3) {
-            req.access_token = tokens[0];
-            req.refresh_token = tokens[1];
-            //req.id_token = tokens[2];
-        }
+        req.access_token = authorization.split(' ')[1];
+        req.refresh_token = refresh;
         try {
-            jwt.verify(req.access_token,  process.env.CLIENT_SECRET, async function(err, decoded) {
-                if (err) {
-                    console.log('expired');
+            let payload = jwt.decode(req.access_token);
+            console.log(payload)
 
-                    let refreshRequest = await AuthenticationClient.refreshToken(
-                        {
-                            refresh_token: req.refresh_token
-                        }
-                    );
+            if (Date.now() >= payload.exp * 1000) {
+                console.log('Token expired', payload.exp);
 
-                    req.access_token = refreshRequest.access_token;
+                let refreshRequest = await AuthenticationClient.refreshToken(
+                    {
+                        refresh_token: req.refresh_token
+                    }
+                );
 
-                    console.log("Token was refreshed", refreshRequest);
-                }
-            });
+                req.access_token = refreshRequest.access_token;
+
+                console.log("Token was refreshed", refreshRequest);
+            }
         } catch (err) {
+            console.log(err)
             res.status(401).send();
             return;
         }
+
         res.headers = {Authorization: `${req.access_token};${req.refresh_token}`}
     }
+
     next();
 });
 
@@ -75,7 +77,15 @@ app.get('/', (req, res) => {
             logout: 'http://localhost:3000/logout'
         })
     }
-    res.sendFile(path.join(__dirname + '/index.html'));
+
+    const uri = new URL(`https://${domain}/authorize`);
+
+    uri.searchParams.append('client_id', client_id);
+    uri.searchParams.append('redirect_uri', 'http://localhost:3000/callback');
+    uri.searchParams.append('response_type', 'code');
+    uri.searchParams.append('response_mode', 'query');
+
+    res.redirect(uri.toString());
 })
 
 app.get('/logout', (req, res) => {
@@ -104,9 +114,16 @@ app.post('/api/login', async (req, res) => {
     });
 });
 
+app.get('/callback', (req, res) => {
+    const code = req.query.code;
+    console.log(code);
+
+    res.status(200).send()
+});
+
 const checkJwt = auth({
-    audience: 'https://kpi.eu.auth0.com/api/v2/',
-    issuerBaseURL: `https://kpi.eu.auth0.com`,
+    audience: `https://${domain}/api/v2/`,
+    issuerBaseURL: `https://${domain}`,
 });
 
 app.get('/api/check', checkJwt, (req, res) => {
@@ -128,7 +145,6 @@ app.post('/api/register', async (req, res) => {
                 connection: 'Username-Password-Authentication'
             }
         );
-
         if (createResult instanceof Error) {
             throw createResult;
         }
@@ -137,23 +153,21 @@ app.post('/api/register', async (req, res) => {
         console.log(err);
         return;
     }
-    console.log(createResult)
-    res.status(200).send();
 });
+
 
 async function auth0Login(login, password) {
     const data = {
-        audience: 'https://kpi.eu.auth0.com/api/v2/',
-        client_id: 'JIvCO5c2IBHlAe2patn6l6q5H35qxti0',
+        audience: `https://${domain}/api/v2/`,
+        client_id: client_id,
         username: login,
         password: password,
         realm: 'Username-Password-Authentication',
         scope: 'offline_access'
     };
-
     return AuthenticationClient.passwordGrant(data);
 }
 
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}`)
-})
+});
